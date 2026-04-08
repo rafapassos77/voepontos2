@@ -17,7 +17,7 @@ from src.models import (
 )
 
 
-_SYSTEM_PROMPT = """Você é um agente especialista em viagens de luxo e economia trabalhando em um terminal profissional de agência de turismo brasileiro.
+_SYSTEM_PROMPT = """Você é um agente especialista em viagens de luxo e economia trabalhando em um terminal profissional de agência de turismo brasileiro especializado em emissão de passagens com milhas.
 
 Suas capacidades:
 - Detectar preços assimétricos (oportunidades abaixo do mercado)
@@ -26,6 +26,9 @@ Suas capacidades:
 - Adaptar recomendações ao perfil e orçamento do cliente
 - Identificar combinações voo+hotel com melhor custo-benefício
 - Avaliar qualidade das opções além do preço
+- Comparar emissão em milhas vs. passagem paga e calcular custo por milha (CPM)
+- Conhecer os programas: Smiles (GOL), TudoAzul (AZUL), LATAM Pass, Miles&Go (TAP), Avios (Iberia), AAdvantage (American)
+- Identificar quando usar milhas é mais vantajoso que pagar em dinheiro
 
 Formato de resposta:
 - Seja direto e objetivo (respostas de 200-400 palavras)
@@ -95,6 +98,41 @@ class TravelAgent:
 
         lines.append("")
 
+        # Miles offers
+        if result.miles_offers:
+            outbound_miles = [o for o in result.miles_offers if o.direction == 1]
+            inbound_miles = [o for o in result.miles_offers if o.direction == 2]
+            lines.append(f"=== OFERTAS EM MILHAS ({len(result.miles_offers)}) ===")
+            if outbound_miles:
+                lines.append(f"--- IDA ({len(outbound_miles)} opções) ---")
+                for i, m in enumerate(outbound_miles[:6], 1):
+                    miles = m.total_miles_adult or m.miles_adult
+                    fee = m.fee_adult
+                    tipo = m.miles_type or m.value_type or "—"
+                    conn_str = "DIRETO" if m.connections == 0 else f"{m.connections} escala(s)"
+                    lines.append(
+                        f"{i}. {m.company} {m.flight_number} | "
+                        f"{miles:,.0f} pts | taxa R${fee:,.2f} | "
+                        f"{tipo} | {m.duration_fmt} | {conn_str}"
+                    )
+            if inbound_miles:
+                lines.append(f"--- VOLTA ({len(inbound_miles)} opções) ---")
+                for i, m in enumerate(inbound_miles[:4], 1):
+                    miles = m.total_miles_adult or m.miles_adult
+                    fee = m.fee_adult
+                    lines.append(
+                        f"{i}. {m.company} {m.flight_number} | "
+                        f"{miles:,.0f} pts | taxa R${fee:,.2f} | {m.duration_fmt}"
+                    )
+            best_m = result.best_miles_offer
+            if best_m:
+                best_miles = best_m.total_miles_adult or best_m.miles_adult
+                lines.append(
+                    f"\nMelhor milhas (ida): {best_miles:,.0f} pts — "
+                    f"{best_m.company} {best_m.flight_number}"
+                )
+        lines.append("")
+
         # Hotels
         if result.hotels:
             lines.append(f"=== HOTÉIS ENCONTRADOS ({len(result.hotels)}) ===")
@@ -138,7 +176,11 @@ class TravelAgent:
         if extra_question:
             user_msg += f"\n\n=== PERGUNTA DO CLIENTE ===\n{extra_question}"
         else:
-            user_msg += "\n\nFaça uma análise completa: identifique oportunidades, preços assimétricos, recomende a melhor opção e indique urgência de compra."
+            user_msg += (
+            "\n\nFaça uma análise completa: identifique oportunidades, preços assimétricos, "
+            "compare emissão em milhas vs. pagamento em dinheiro (calcule CPM quando possível), "
+            "recomende a melhor opção para o perfil do cliente e indique urgência de compra."
+        )
 
         try:
             async with self._client.messages.stream(
@@ -195,6 +237,30 @@ class TravelAgent:
             prices = [f.price for f in result.flights]
             lines.append(f"   • Faixa: {min(prices):,.0f} – {max(prices):,.0f} BRL\n")
             lines.append(f"   • Média: {sum(prices)/len(prices):,.0f} BRL\n\n")
+
+        # Miles summary
+        if result.miles_offers:
+            outbound_m = [o for o in result.miles_offers if o.direction == 1]
+            best_m = result.best_miles_offer
+            lines.append(f"🎯 **Milhas disponíveis:** {len(result.miles_offers)} opção(ões)\n")
+            if best_m:
+                best_pts = best_m.total_miles_adult or best_m.miles_adult
+                lines.append(
+                    f"   Melhor: **{best_m.company}** — "
+                    f"{best_pts:,.0f} pts + R${best_m.fee_adult:,.2f} taxa\n"
+                )
+                # CPM comparison
+                best_flight = result.best_flight
+                if best_flight and best_pts > 0:
+                    cpm = best_flight.price / best_pts
+                    lines.append(f"   Custo por milha (CPM): R$ {cpm:.4f}\n")
+                    if cpm < 0.03:
+                        lines.append("   🔥 **CPM excelente** (< R$0,03) — valhe muito usar milhas!\n")
+                    elif cpm < 0.05:
+                        lines.append("   ✅ **CPM bom** — milhas vantajosas nessa rota\n")
+                    else:
+                        lines.append("   ⚠️ CPM alto — avalie se compensa usar milhas\n")
+            lines.append("\n")
 
         if result.hotels:
             best_hotel = min(result.hotels, key=lambda h: h.total_price)

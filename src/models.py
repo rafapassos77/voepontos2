@@ -209,10 +209,81 @@ class PriceHistory:
 
 
 @dataclass
+class MilesConnection:
+    origin: str
+    destination: str
+    departure: datetime
+    arrival: datetime
+    carrier: str
+    flight_number: str
+    duration_minutes: int
+
+
+@dataclass
+class MilesOffer:
+    """Oferta de voo em milhas via BuscaMilhas API."""
+    company: str               # GOL, AZUL, LATAM, TAP, IBERIA, etc.
+    flight_number: str
+    direction: int             # 1 = ida, 2 = volta
+    origin: str
+    destination: str
+    departure: datetime
+    arrival: datetime
+    duration_minutes: int
+    connections: int
+    connection_list: list[MilesConnection] = field(default_factory=list)
+
+    # Valores em milhas
+    miles_adult: float = 0.0
+    miles_child: float = 0.0
+    miles_infant: float = 0.0
+    total_miles_adult: float = 0.0
+    total_miles_child: float = 0.0
+    total_miles_infant: float = 0.0
+
+    # Taxas (sempre em dinheiro, BRL)
+    fee_adult: float = 0.0      # TaxaEmbarque unitário
+    fee_child: float = 0.0
+    fee_infant: float = 0.0
+    rescue_fee: float = 0.0     # TaxaResgate (Azul)
+
+    # Tipo de cabine conforme denominação da companhia
+    miles_type: str = ""        # TipoMilhas: smiles, Economy, LIGHT ECONOMY…
+    value_type: str = ""        # TipoValor: PO, LT, Azul, Mais Azul…
+
+    # Bagagem
+    baggage_limit: str = ""
+
+    # Metadados
+    is_miles: bool = True       # True = resultado em milhas, False = pagante
+
+    @property
+    def duration_fmt(self) -> str:
+        h, m = divmod(self.duration_minutes, 60)
+        return f"{h}h{m:02d}m"
+
+    @property
+    def direct(self) -> bool:
+        return self.connections == 0
+
+    def miles_fmt(self, miles: float) -> str:
+        if miles >= 1_000:
+            return f"{miles:,.0f} pts"
+        return f"{miles:.0f} pts"
+
+    def fee_fmt(self, fee: float) -> str:
+        return f"R$ {fee:,.2f}"
+
+    def label_direction(self) -> str:
+        return "IDA" if self.direction == 1 else "VOLTA"
+
+
+@dataclass
 class SearchResult:
     params: SearchParams
     flights: list[FlightOffer] = field(default_factory=list)
     hotels: list[HotelOffer] = field(default_factory=list)
+    miles_offers: list[MilesOffer] = field(default_factory=list)
     price_history: Optional[PriceHistory] = None
     ai_analysis: str = ""
     search_time_ms: int = 0
@@ -227,6 +298,13 @@ class SearchResult:
     @property
     def asymmetric_flights(self) -> list[FlightOffer]:
         return [f for f in self.flights if f.price_trend == PriceTrend.ASYMMETRIC]
+
+    @property
+    def best_miles_offer(self) -> Optional[MilesOffer]:
+        outbound = [o for o in self.miles_offers if o.direction == 1 and o.is_miles]
+        if not outbound:
+            return None
+        return min(outbound, key=lambda o: o.total_miles_adult or o.miles_adult)
 
 
 # Known airports for autocomplete

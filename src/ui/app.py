@@ -26,7 +26,7 @@ from rich.markup import escape
 
 from src.config import Config
 from src.models import (
-    SearchParams, SearchResult, FlightOffer, HotelOffer,
+    SearchParams, SearchResult, FlightOffer, HotelOffer, MilesOffer,
     PriceTrend, CabinClass, TripType, AIRPORTS,
 )
 from src.agents.travel_agent import TravelAgent
@@ -480,6 +480,8 @@ class VoePontosApp(App):
                     with TabbedContent(id="results-tabbed"):
                         with TabPane("✈ Voos", id="tab-flights"):
                             yield DataTable(id="flights-table", zebra_stripes=True, cursor_type="row")
+                        with TabPane("🎯 Milhas", id="tab-miles"):
+                            yield DataTable(id="miles-table", zebra_stripes=True, cursor_type="row")
                         with TabPane("🏨 Hotéis", id="tab-hotels"):
                             yield DataTable(id="hotels-table", zebra_stripes=True, cursor_type="row")
 
@@ -514,6 +516,13 @@ class VoePontosApp(App):
             "Paradas", "Bagagem", "Lugares", "Deal"
         )
         ft.cursor_type = "row"
+
+        mt = self.query_one("#miles-table", DataTable)
+        mt.add_columns(
+            "Dir.", "Cia", "Voo", "Milhas/Ad.", "Taxa/Ad.", "Total Ad.",
+            "Tipo", "Duração", "Conexões", "Bagagem"
+        )
+        mt.cursor_type = "row"
 
         ht = self.query_one("#hotels-table", DataTable)
         ht.add_columns(
@@ -665,16 +674,25 @@ class VoePontosApp(App):
             self.current_result = result
 
             self._populate_flights_table(result.flights)
+            self._populate_miles_table(result.miles_offers)
             self._populate_hotels_table(result.hotels)
             self._update_price_chart(result.price_history)
 
             best = result.best_flight
+            miles_count = len(result.miles_offers)
             count_msg = f"{len(result.flights)} voo(s), {len(result.hotels)} hotel(is)"
+            if miles_count:
+                count_msg += f", [cyan]{miles_count} milhas[/cyan]"
             asym_msg = f" | [green]★ {len(result.asymmetric_flights)} assimétrico(s)[/green]" if result.asymmetric_flights else ""
             demo_flag = " [orange]DEMO[/orange]" if result.is_demo else ""
             self._update_status(
                 f"✓ {count_msg}{asym_msg} | {result.search_time_ms}ms{demo_flag}"
             )
+
+            # Switch to miles tab automatically if miles results found
+            if miles_count and not result.flights:
+                tabs = self.query_one("#results-tabbed", TabbedContent)
+                tabs.active = "tab-miles"
 
             # Save to cache
             await self._cache.save_search(
@@ -716,15 +734,14 @@ class VoePontosApp(App):
 
         is_demo = Config.is_demo_mode()
 
+        # ── 1. Flights + Hotels (Amadeus or mock) ────────────────────────────
         if is_demo:
-            # Use mock data
             flights = generate_flights(params)
             hotels = generate_hotels(params)
             history = generate_price_history(
                 params.origin, params.destination, params.cabin_class
             )
         else:
-            # Try real APIs, fall back to mock on error
             try:
                 from src.api.amadeus_client import AmadeusClient
                 client = AmadeusClient()
@@ -736,7 +753,6 @@ class VoePontosApp(App):
                 flights = generate_flights(params)
                 hotels = generate_hotels(params)
 
-            # Try to get history from cache
             history = await self._cache.get_price_history(
                 f"{params.origin}-{params.destination}",
                 params.cabin_class,
@@ -746,7 +762,28 @@ class VoePontosApp(App):
                     params.origin, params.destination, params.cabin_class
                 )
 
-        # Apply market analysis
+        # ── 2. Miles search (BuscaMilhas — sempre ativa) ─────────────────────
+        miles_offers: list = []
+        try:
+            from src.api.buscamilhas_client import BuscaMilhasClient
+            bm = BuscaMilhasClient()
+            log = self.query_one("#analysis-log", RichLog)
+            log.write("[cyan]🎯 Buscando milhas em GOL, AZUL, LATAM, TAP, IBERIA, AMERICAN...[/cyan]")
+            miles_offers = await bm.search(params, only_miles=True)
+            await bm.close()
+            if miles_offers:
+                log.write(f"[green]✓ {len(miles_offers)} opção(ões) em milhas encontrada(s)[/green]")
+            else:
+                log.write("[yellow]ℹ Nenhuma oferta em milhas disponível para esta rota/data[/yellow]")
+        except Exception as exc:
+            try:
+                self.query_one("#analysis-log", RichLog).write(
+                    f"[dim]ℹ Milhas: {escape(str(exc)[:80])}[/dim]"
+                )
+            except Exception:
+                pass
+
+        # ── 3. Market analysis on cash flights ───────────────────────────────
         if flights:
             avg = sum(f.price for f in flights) / len(flights)
             for f in flights:
@@ -757,6 +794,7 @@ class VoePontosApp(App):
             params=params,
             flights=flights,
             hotels=hotels,
+            miles_offers=miles_offers,
             price_history=history,
             is_demo=is_demo,
         )
@@ -764,10 +802,9 @@ class VoePontosApp(App):
     # ─── Table Population ─────────────────────────────────────────────────────
 
     def _clear_tables(self) -> None:
-        ft = self.query_one("#flights-table", DataTable)
-        ft.clear()
-        ht = self.query_one("#hotels-table", DataTable)
-        ht.clear()
+        self.query_one("#flights-table", DataTable).clear()
+        self.query_one("#miles-table", DataTable).clear()
+        self.query_one("#hotels-table", DataTable).clear()
 
     def _populate_flights_table(self, flights: list[FlightOffer]) -> None:
         table = self.query_one("#flights-table", DataTable)
@@ -826,6 +863,68 @@ class VoePontosApp(App):
 
             table.add_row(rank, carrier, flight_num, price_txt, pct_txt,
                           duration, stops_txt, bag, seats, deal_txt)
+
+    def _populate_miles_table(self, offers: list[MilesOffer]) -> None:
+        table = self.query_one("#miles-table", DataTable)
+        table.clear()
+
+        if not offers:
+            return
+
+        # Group by direction so outbound comes first, then inbound
+        for offer in offers:
+            dir_txt = Text(
+                "IDA" if offer.direction == 1 else "VLT",
+                style="cyan" if offer.direction == 1 else "magenta",
+            )
+            cia = Text(offer.company, style="bold")
+
+            flight_num = Text(offer.flight_number or "—", style="dim")
+
+            # Miles column — highlight very low amounts
+            miles = offer.total_miles_adult or offer.miles_adult
+            miles_style = "bold green" if miles > 0 and miles < 20_000 else (
+                "green" if miles < 40_000 else "yellow" if miles < 70_000 else "red"
+            )
+            miles_txt = Text(
+                offer.miles_fmt(miles) if miles > 0 else "—",
+                style=miles_style,
+            )
+
+            # Airport fee
+            fee = offer.fee_adult
+            fee_txt = Text(
+                offer.fee_fmt(fee) if fee > 0 else "—",
+                style="yellow" if fee > 200 else "dim",
+            )
+
+            # Total (milhas + taxa): show only if rescue_fee available
+            total_rescue = offer.rescue_fee
+            if total_rescue > 0:
+                total_txt = Text(f"{offer.fee_fmt(total_rescue)} resgate", style="dim")
+            elif fee > 0 and miles > 0:
+                total_txt = Text(f"{offer.miles_fmt(miles)} + {offer.fee_fmt(fee)}", style="dim")
+            else:
+                total_txt = Text("—", style="dim")
+
+            # Miles type (cabin denomination)
+            tipo = offer.miles_type or offer.value_type or "—"
+            tipo_txt = Text(tipo[:18], style="dim")
+
+            dur_txt = Text(offer.duration_fmt, style="dim")
+
+            conn = offer.connections
+            conn_txt = Text(
+                "DIRETO" if conn == 0 else f"{conn} escala(s)",
+                style="green" if conn == 0 else "yellow",
+            )
+
+            bag_txt = Text(offer.baggage_limit[:10] if offer.baggage_limit else "—", style="dim")
+
+            table.add_row(
+                dir_txt, cia, flight_num, miles_txt, fee_txt, total_txt,
+                tipo_txt, dur_txt, conn_txt, bag_txt,
+            )
 
     def _populate_hotels_table(self, hotels: list[HotelOffer]) -> None:
         table = self.query_one("#hotels-table", DataTable)
