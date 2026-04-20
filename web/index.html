@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VoePontos — Terminal de Viagens</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            navy: { 900: '#0a0e1a', 800: '#0f1628', 700: '#141d35', 600: '#1a2540' },
+            cyan: { 400: '#00d4ff', 300: '#33ddff' },
+            gold: '#ffd700',
+          }
+        }
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
+  <style>
+    body { background: #0a0e1a; font-family: 'Segoe UI', system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #0f1628; }
+    ::-webkit-scrollbar-thumb { background: #1a2540; border-radius: 3px; }
+    .card-border-green { border-left: 3px solid #22c55e; }
+    .card-border-yellow { border-left: 3px solid #eab308; }
+    .card-border-red { border-left: 3px solid #ef4444; }
+    .card-border-cyan { border-left: 3px solid #00d4ff; }
+    .pulse-dot { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .typewriter { border-right: 2px solid #00d4ff; }
+    .analysis-content h1,.analysis-content h2,.analysis-content h3 { color:#00d4ff; margin:1rem 0 .5rem; font-weight:700; }
+    .analysis-content strong { color:#ffd700; }
+    .analysis-content ul { list-style:disc; padding-left:1.5rem; margin:.5rem 0; }
+    .analysis-content li { margin:.25rem 0; color:#cbd5e1; }
+    .analysis-content p { margin:.5rem 0; color:#cbd5e1; }
+    .analysis-content hr { border-color:#1a2540; margin:1rem 0; }
+    .tab-active { border-bottom: 2px solid #00d4ff; color: #00d4ff; }
+    .skeleton { background: linear-gradient(90deg,#141d35 25%,#1a2540 50%,#141d35 75%); background-size:200% 100%; animation: shimmer 1.5s infinite; }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  </style>
+</head>
+<body class="min-h-screen text-slate-100" x-data="travelApp()" x-init="init()">
+
+<!-- ── HEADER ─────────────────────────────────────────────────────────────── -->
+<header class="bg-navy-800 border-b border-navy-600 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+  <div class="flex items-center gap-3">
+    <span class="text-2xl font-black tracking-tight text-cyan-400">✈ VoePontos</span>
+    <span class="text-xs text-slate-500 hidden sm:block">Terminal de Agência de Viagens</span>
+  </div>
+  <div class="flex items-center gap-3">
+    <span x-show="isDemo" class="text-xs bg-yellow-900/60 text-yellow-400 border border-yellow-700 px-2 py-1 rounded">DEMO MODE</span>
+    <span x-show="!isDemo && searched" class="text-xs bg-green-900/60 text-green-400 border border-green-700 px-2 py-1 rounded">● LIVE</span>
+    <a href="#" class="text-xs text-slate-500 hover:text-cyan-400 transition">Histórico</a>
+  </div>
+</header>
+
+<!-- ── TOASTS ─────────────────────────────────────────────────────────────── -->
+<div class="fixed top-16 right-4 z-50 flex flex-col gap-2">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="px-4 py-2 rounded shadow-lg text-sm font-medium transition-all"
+         :class="t.type==='error' ? 'bg-red-900 text-red-200 border border-red-700' : t.type==='success' ? 'bg-green-900 text-green-200 border border-green-700' : 'bg-navy-700 text-slate-200 border border-navy-500'"
+         x-text="t.message"></div>
+  </template>
+</div>
+
+<!-- ── MAIN LAYOUT ────────────────────────────────────────────────────────── -->
+<div class="flex h-[calc(100vh-56px)]">
+
+  <!-- LEFT SIDEBAR — Search Form -->
+  <aside class="w-72 min-w-[18rem] bg-navy-800 border-r border-navy-600 overflow-y-auto flex-shrink-0">
+    <div class="p-4">
+      <h2 class="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Nova Busca</h2>
+
+      <!-- Origin / Destination -->
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label class="text-xs text-slate-500 block mb-1">Origem</label>
+          <input list="airports-list" x-model="form.origin"
+            class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm font-mono uppercase focus:outline-none focus:border-cyan-400 transition"
+            placeholder="GRU" maxlength="3" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500 block mb-1">Destino</label>
+          <input list="airports-list" x-model="form.destination"
+            class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm font-mono uppercase focus:outline-none focus:border-cyan-400 transition"
+            placeholder="CDG" maxlength="3" />
+        </div>
+      </div>
+
+      <datalist id="airports-list">
+        <template x-for="(info, iata) in airportsList" :key="iata">
+          <option :value="iata" :label="`${iata} – ${info.city} (${info.name})`"></option>
+        </template>
+      </datalist>
+
+      <!-- Dates -->
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label class="text-xs text-slate-500 block mb-1">Ida</label>
+          <input type="date" x-model="form.depDate"
+            class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm focus:outline-none focus:border-cyan-400 transition" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500 block mb-1">Volta</label>
+          <input type="date" x-model="form.retDate"
+            class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm focus:outline-none focus:border-cyan-400 transition" />
+        </div>
+      </div>
+
+      <!-- Passengers + Cabin -->
+      <div class="grid grid-cols-2 gap-2 mb-3">
+        <div>
+          <label class="text-xs text-slate-500 block mb-1">Adultos</label>
+          <input type="number" x-model.number="form.adults" min="1" max="9"
+            class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm focus:outline-none focus:border-cyan-400 transition" />
+        </div>
+        <div>
+          <label class="text-xs text-slate-500 block mb-1">Classe</label>
+          <select x-model="form.cabin"
+            class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm focus:outline-none focus:border-cyan-400 transition">
+            <option value="ECONOMY">Econômica</option>
+            <option value="PREMIUM_ECONOMY">Prem. Eco.</option>
+            <option value="BUSINESS">Executiva</option>
+            <option value="FIRST">1ª Classe</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Budget -->
+      <div class="mb-3">
+        <label class="text-xs text-slate-500 block mb-1">Orçamento máx (R$)</label>
+        <input type="number" x-model.number="form.budget" placeholder="Sem limite"
+          class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-sm focus:outline-none focus:border-cyan-400 transition" />
+      </div>
+
+      <!-- Checkboxes -->
+      <div class="flex gap-4 mb-3">
+        <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+          <input type="checkbox" x-model="form.directOnly" class="accent-cyan-400" />
+          Direto
+        </label>
+        <label class="flex items-center gap-2 text-xs text-slate-400 cursor-pointer">
+          <input type="checkbox" x-model="form.baggage" class="accent-cyan-400" />
+          Bagagem
+        </label>
+      </div>
+
+      <!-- Profile -->
+      <div class="mb-4">
+        <label class="text-xs text-slate-500 block mb-1">Perfil do cliente</label>
+        <textarea x-model="form.profile" rows="2" placeholder="Ex: viajante frequente, prefere janela, flexível em datas..."
+          class="w-full bg-navy-700 border border-navy-500 rounded px-2 py-2 text-xs focus:outline-none focus:border-cyan-400 transition resize-none"></textarea>
+      </div>
+
+      <!-- Search Button -->
+      <button @click="search()" :disabled="loading"
+        class="w-full bg-cyan-400 hover:bg-cyan-300 text-navy-900 font-bold py-3 rounded transition disabled:opacity-50 disabled:cursor-not-allowed text-sm tracking-wide">
+        <span x-show="!loading">🔍 BUSCAR AGORA</span>
+        <span x-show="loading" class="flex items-center justify-center gap-2">
+          <span class="pulse-dot">●</span> Buscando...
+        </span>
+      </button>
+
+      <!-- Recent Searches -->
+      <div x-show="recentSearches.length > 0" class="mt-5">
+        <h3 class="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Recentes</h3>
+        <template x-for="r in recentSearches" :key="r.origin+r.destination+r.cabin">
+          <button @click="fillFromRecent(r)"
+            class="w-full text-left text-xs px-2 py-2 rounded bg-navy-700 hover:bg-navy-600 mb-1 transition flex justify-between items-center">
+            <span class="text-cyan-400 font-mono" x-text="`${r.origin} → ${r.destination}`"></span>
+            <span class="text-slate-500" x-text="r.best_price ? `R$${Number(r.best_price).toLocaleString('pt-BR',{maximumFractionDigits:0})}` : '—'"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+  </aside>
+
+  <!-- RIGHT PANEL -->
+  <main class="flex-1 overflow-y-auto bg-navy-900">
+    <div class="p-4 max-w-6xl mx-auto">
+
+      <!-- Welcome / Empty State -->
+      <div x-show="!searched && !loading" class="flex flex-col items-center justify-center h-64 text-center">
+        <div class="text-5xl mb-4">✈️</div>
+        <p class="text-slate-400 text-lg font-light">Configure sua busca e clique em <strong class="text-cyan-400">Buscar Agora</strong></p>
+        <p class="text-slate-600 text-sm mt-2">Voos, milhas BuscaMilhas, hotéis e análise IA em tempo real</p>
+      </div>
+
+      <!-- Skeleton Loader -->
+      <div x-show="loading" class="space-y-4">
+        <div class="h-8 skeleton rounded w-1/3"></div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <template x-for="i in [1,2,3,4,5,6]" :key="i">
+            <div class="bg-navy-800 rounded-lg p-4 space-y-3">
+              <div class="h-4 skeleton rounded w-3/4"></div>
+              <div class="h-6 skeleton rounded w-1/2"></div>
+              <div class="h-3 skeleton rounded w-full"></div>
+              <div class="h-3 skeleton rounded w-2/3"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Results -->
+      <div x-show="searched && !loading">
+
+        <!-- Summary Bar -->
+        <div class="flex items-center gap-3 mb-4 flex-wrap">
+          <span class="text-sm font-bold text-cyan-400" x-text="`${form.origin} → ${form.destination}`"></span>
+          <span class="text-xs text-slate-500" x-text="summaryText"></span>
+          <span x-show="asymCount > 0" class="text-xs bg-yellow-900/50 border border-yellow-700 text-yellow-400 px-2 py-0.5 rounded">
+            ★ <span x-text="asymCount"></span> assimétrico(s)
+          </span>
+          <span x-show="searchTimeMs > 0" class="text-xs text-slate-600" x-text="`${searchTimeMs}ms`"></span>
+        </div>
+
+        <!-- TABS -->
+        <div class="flex gap-0 border-b border-navy-600 mb-4">
+          <button @click="activeTab='flights'"
+            class="px-4 py-2 text-sm font-medium transition"
+            :class="activeTab==='flights' ? 'tab-active' : 'text-slate-500 hover:text-slate-300'">
+            ✈ Voos (<span x-text="flights.length"></span>)
+          </button>
+          <button @click="activeTab='miles'"
+            class="px-4 py-2 text-sm font-medium transition"
+            :class="activeTab==='miles' ? 'tab-active' : 'text-slate-500 hover:text-slate-300'">
+            🎯 Milhas (<span x-text="milesOffers.length"></span>)
+          </button>
+          <button @click="activeTab='hotels'"
+            class="px-4 py-2 text-sm font-medium transition"
+            :class="activeTab==='hotels' ? 'tab-active' : 'text-slate-500 hover:text-slate-300'">
+            🏨 Hotéis (<span x-text="hotels.length"></span>)
+          </button>
+          <button @click="activeTab='chart'"
+            class="px-4 py-2 text-sm font-medium transition"
+            :class="activeTab==='chart' ? 'tab-active' : 'text-slate-500 hover:text-slate-300'">
+            📈 Histórico
+          </button>
+        </div>
+
+        <!-- FLIGHTS TAB -->
+        <div x-show="activeTab==='flights'">
+          <div x-show="flights.length === 0" class="text-slate-500 text-sm py-8 text-center">Nenhum voo encontrado.</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <template x-for="f in flights" :key="f.id">
+              <div class="bg-navy-800 rounded-lg p-4 hover:bg-navy-700 transition"
+                   :class="f.price_trend==='asymmetric' ? 'card-border-green' : f.price_trend==='up' ? 'card-border-red' : 'card-border-yellow'">
+                <!-- Header -->
+                <div class="flex justify-between items-start mb-2">
+                  <div>
+                    <span class="text-cyan-400 font-semibold text-sm" x-text="f.outbound[0]?.carrier_name || f.outbound[0]?.carrier"></span>
+                    <span class="text-slate-600 text-xs ml-1" x-text="f.outbound[0]?.flight_number"></span>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-bold text-lg"
+                         :class="f.is_deal ? 'text-green-400' : f.price_trend==='up' ? 'text-red-400' : 'text-slate-100'"
+                         x-text="'R$ '+Number(f.price).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+                    <div class="text-xs" :class="f.price_vs_avg_pct < 0 ? 'text-green-400' : 'text-red-400'"
+                         x-text="(f.price_vs_avg_pct > 0 ? '+' : '') + f.price_vs_avg_pct.toFixed(1)+'% mercado'"></div>
+                  </div>
+                </div>
+                <!-- Route + Duration -->
+                <div class="flex items-center gap-2 text-sm mb-2">
+                  <span class="font-mono text-slate-300" x-text="f.outbound[0]?.origin + ' → ' + (f.outbound[f.outbound.length-1]?.destination || f.outbound[0]?.destination)"></span>
+                  <span class="text-slate-600">·</span>
+                  <span class="text-slate-400" x-text="fmtDuration(f.outbound.reduce((s,seg)=>s+seg.duration_minutes,0))"></span>
+                </div>
+                <!-- Stops + Baggage -->
+                <div class="flex items-center gap-2 flex-wrap">
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="f.total_stops===0 ? 'bg-green-900/50 text-green-400 border border-green-800' : 'bg-yellow-900/50 text-yellow-400 border border-yellow-800'"
+                        x-text="f.total_stops===0 ? 'DIRETO' : f.total_stops+' escala(s)'"></span>
+                  <span x-show="f.baggage_included" class="text-xs text-green-400 border border-green-800 bg-green-900/30 px-2 py-0.5 rounded">✓ Bagagem</span>
+                  <span x-show="f.seats_left <= 5 && f.seats_left > 0" class="text-xs text-red-400 border border-red-800 bg-red-900/30 px-2 py-0.5 rounded"
+                        x-text="f.seats_left+' lugar(es)'"></span>
+                  <span x-show="f.price_trend==='asymmetric'" class="text-xs text-yellow-400 font-bold">★ ASSIMÉTRICO</span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- MILES TAB -->
+        <div x-show="activeTab==='miles'">
+          <div x-show="milesOffers.length === 0" class="text-slate-500 text-sm py-8 text-center">
+            Nenhuma oferta em milhas encontrada. A BuscaMilhas pode estar indisponível para esta rota.
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <template x-for="(m, idx) in milesOffers" :key="idx">
+              <div class="bg-navy-800 rounded-lg p-4 hover:bg-navy-700 transition card-border-cyan">
+                <!-- Header -->
+                <div class="flex justify-between items-start mb-2">
+                  <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded flex items-center justify-center text-xs font-bold text-navy-900"
+                         :style="companyColor(m.company)"
+                         x-text="m.company.substring(0,2)"></div>
+                    <div>
+                      <div class="text-sm font-semibold text-cyan-400" x-text="m.company"></div>
+                      <div class="text-xs text-slate-600" x-text="m.flight_number"></div>
+                    </div>
+                  </div>
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="m.direction===1 ? 'bg-blue-900/50 text-blue-400 border border-blue-800' : 'bg-purple-900/50 text-purple-400 border border-purple-800'"
+                        x-text="m.direction===1 ? 'IDA' : 'VOLTA'"></span>
+                </div>
+                <!-- Miles -->
+                <div class="mb-2">
+                  <div class="text-xl font-bold text-slate-100"
+                       x-text="fmtMiles(m.total_miles_adult || m.miles_adult)"></div>
+                  <div class="text-xs text-slate-500">+ <span x-text="'R$ '+Number(m.fee_adult).toFixed(2)"></span> taxa</div>
+                </div>
+                <!-- CPM Badge -->
+                <div x-show="bestFlightPrice > 0 && (m.total_miles_adult || m.miles_adult) > 0" class="mb-2">
+                  <span class="text-xs px-2 py-0.5 rounded font-mono"
+                        :class="cpmClass(bestFlightPrice, m.total_miles_adult || m.miles_adult)"
+                        x-text="'CPM R$ '+cpm(bestFlightPrice, m.total_miles_adult || m.miles_adult)"></span>
+                </div>
+                <!-- Details -->
+                <div class="flex items-center gap-2 flex-wrap text-xs">
+                  <span class="text-slate-400" x-text="m.origin + ' → ' + m.destination"></span>
+                  <span class="text-slate-600">·</span>
+                  <span class="text-slate-400" x-text="fmtMilesDuration(m.duration_minutes)"></span>
+                  <span x-show="m.connections===0" class="text-green-400">Direto</span>
+                  <span x-show="m.connections>0" class="text-yellow-400" x-text="m.connections+' con.'"></span>
+                </div>
+                <!-- Type badges -->
+                <div class="flex gap-1 mt-2 flex-wrap">
+                  <span x-show="m.miles_type" class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.miles_type"></span>
+                  <span x-show="m.baggage_limit" class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.baggage_limit"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- HOTELS TAB -->
+        <div x-show="activeTab==='hotels'">
+          <div x-show="hotels.length === 0" class="text-slate-500 text-sm py-8 text-center">Nenhum hotel encontrado.</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <template x-for="h in hotels" :key="h.id">
+              <div class="bg-navy-800 rounded-lg p-4 hover:bg-navy-700 transition"
+                   :class="h.deal_score>=60 ? 'card-border-green' : h.price_trend==='up' ? 'card-border-red' : 'card-border-yellow'">
+                <div class="flex justify-between items-start mb-2">
+                  <div>
+                    <div class="font-semibold text-cyan-400 text-sm" x-text="h.name"></div>
+                    <div class="text-xs text-slate-500" x-text="h.city"></div>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-bold text-lg text-slate-100" x-text="'R$ '+Number(h.total_price).toLocaleString('pt-BR',{minimumFractionDigits:2})"></div>
+                    <div class="text-xs text-slate-500" x-text="'R$ '+Number(h.price_per_night).toFixed(0)+'/noite'"></div>
+                  </div>
+                </div>
+                <div class="flex items-center gap-2 mb-2 flex-wrap">
+                  <span class="text-yellow-400 text-sm" x-text="'★'.repeat(h.stars)+'☆'.repeat(5-h.stars)"></span>
+                  <span class="text-xs px-2 py-0.5 rounded"
+                        :class="h.rating >= 8.5 ? 'bg-green-900/50 text-green-400 border border-green-800' : 'bg-slate-800 text-slate-400 border border-slate-700'"
+                        x-text="h.rating.toFixed(1)+' ★ ('+h.review_count+' avaliações)'"></span>
+                </div>
+                <div class="flex gap-2 flex-wrap text-xs">
+                  <span x-show="h.breakfast_included" class="text-green-400 border border-green-800 bg-green-900/30 px-2 py-0.5 rounded">✓ Café incl.</span>
+                  <span class="text-slate-500 border border-slate-700 px-2 py-0.5 rounded" x-text="h.cancellation_policy"></span>
+                  <span :class="h.price_vs_avg_pct < 0 ? 'text-green-400' : 'text-red-400'"
+                        x-text="(h.price_vs_avg_pct > 0 ? '+' : '')+h.price_vs_avg_pct.toFixed(1)+'% mercado'"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- CHART TAB -->
+        <div x-show="activeTab==='chart'" class="bg-navy-800 rounded-lg p-4">
+          <h3 class="text-sm font-bold text-slate-400 mb-3">Histórico de Preços — últimos 30 dias</h3>
+          <div x-show="!priceHistory || !priceHistory.points || priceHistory.points.length === 0"
+               class="text-slate-500 text-sm py-8 text-center">Sem histórico de preços para esta rota.</div>
+          <div x-show="priceHistory && priceHistory.points && priceHistory.points.length > 0" style="position:relative;height:280px;">
+            <canvas id="priceChart"></canvas>
+          </div>
+          <!-- Stats -->
+          <div x-show="priceHistory && priceHistory.points && priceHistory.points.length > 0"
+               class="grid grid-cols-3 gap-3 mt-4">
+            <div class="bg-navy-700 rounded p-3 text-center">
+              <div class="text-xs text-slate-500 mb-1">Mínimo</div>
+              <div class="text-green-400 font-bold" x-text="priceHistory ? 'R$ '+Number(chartMin).toLocaleString('pt-BR',{minimumFractionDigits:0}) : '—'"></div>
+            </div>
+            <div class="bg-navy-700 rounded p-3 text-center">
+              <div class="text-xs text-slate-500 mb-1">Média</div>
+              <div class="text-yellow-400 font-bold" x-text="priceHistory ? 'R$ '+Number(chartAvg).toLocaleString('pt-BR',{minimumFractionDigits:0}) : '—'"></div>
+            </div>
+            <div class="bg-navy-700 rounded p-3 text-center">
+              <div class="text-xs text-slate-500 mb-1">Atual</div>
+              <div class="text-cyan-400 font-bold" x-text="priceHistory ? 'R$ '+Number(chartCurrent).toLocaleString('pt-BR',{minimumFractionDigits:0}) : '—'"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI ANALYSIS PANEL -->
+        <div class="mt-4 bg-navy-800 rounded-lg p-4 border border-navy-600">
+          <div class="flex items-center gap-2 mb-3">
+            <span class="text-cyan-400 font-bold text-sm">🤖 Análise Claude Opus</span>
+            <span x-show="analysisStreaming" class="pulse-dot text-cyan-400 text-xs">●</span>
+            <span x-show="analysisStreaming" class="text-xs text-slate-500">analisando...</span>
+            <span x-show="!analysisStreaming && analysisText" class="text-xs text-green-400">✓ concluído</span>
+          </div>
+          <div x-show="!analysisText && !analysisStreaming" class="text-slate-600 text-xs">
+            A análise IA inicia automaticamente após a busca.
+          </div>
+          <div class="analysis-content text-sm leading-relaxed"
+               x-show="analysisText"
+               x-html="renderAnalysis(analysisText)"></div>
+        </div>
+
+      </div><!-- /results -->
+    </div><!-- /max-w -->
+  </main>
+</div><!-- /layout -->
+
+<script>
+function travelApp() {
+  return {
+    // State
+    loading: false,
+    searched: false,
+    activeTab: 'flights',
+    flights: [],
+    milesOffers: [],
+    hotels: [],
+    priceHistory: null,
+    searchId: null,
+    analysisText: '',
+    analysisStreaming: false,
+    recentSearches: [],
+    isDemo: false,
+    toasts: [],
+    summaryText: '',
+    asymCount: 0,
+    searchTimeMs: 0,
+    bestFlightPrice: 0,
+    chartMin: 0,
+    chartAvg: 0,
+    chartCurrent: 0,
+    airportsList: {},
+    _chart: null,
+
+    // Form
+    form: {
+      origin: 'GRU',
+      destination: 'CDG',
+      depDate: '',
+      retDate: '',
+      adults: 1,
+      cabin: 'ECONOMY',
+      budget: '',
+      directOnly: false,
+      baggage: false,
+      profile: '',
+    },
+
+    async init() {
+      // Set default departure date (30 days from now)
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      this.form.depDate = d.toISOString().slice(0, 10);
+
+      // Load airports
+      try {
+        const r = await fetch('/api/airports');
+        if (r.ok) this.airportsList = await r.json();
+      } catch {}
+
+      // Load recent searches
+      await this.loadRecentSearches();
+    },
+
+    async loadRecentSearches() {
+      try {
+        const r = await fetch('/api/recent-searches?limit=6');
+        if (r.ok) this.recentSearches = await r.json();
+      } catch {}
+    },
+
+    fillFromRecent(r) {
+      this.form.origin = r.origin;
+      this.form.destination = r.destination;
+      this.form.cabin = r.cabin;
+    },
+
+    async search() {
+      if (this.loading) return;
+      if (!this.form.origin || !this.form.destination) {
+        this.toast('Preencha origem e destino.', 'error');
+        return;
+      }
+
+      this.loading = true;
+      this.analysisText = '';
+      this.analysisStreaming = false;
+      this.flights = [];
+      this.milesOffers = [];
+      this.hotels = [];
+      this.priceHistory = null;
+      this.bestFlightPrice = 0;
+
+      try {
+        const body = {
+          origin: this.form.origin.toUpperCase(),
+          destination: this.form.destination.toUpperCase(),
+          departure_date: this.form.depDate || new Date(Date.now()+30*86400000).toISOString().slice(0,10),
+          return_date: this.form.retDate || null,
+          adults: this.form.adults || 1,
+          cabin_class: this.form.cabin,
+          max_budget: this.form.budget ? Number(this.form.budget) : null,
+          direct_only: this.form.directOnly,
+          include_baggage: this.form.baggage,
+          customer_profile: this.form.profile,
+        };
+
+        const r = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+
+        if (!r.ok) {
+          const err = await r.json();
+          throw new Error(err.detail || 'Erro na busca');
+        }
+
+        const data = await r.json();
+
+        this.flights = data.flights || [];
+        this.milesOffers = data.miles_offers || [];
+        this.hotels = data.hotels || [];
+        this.priceHistory = data.price_history || null;
+        this.searchId = data.search_id;
+        this.isDemo = data.is_demo || false;
+        this.searchTimeMs = data.search_time_ms || 0;
+        this.asymCount = this.flights.filter(f => f.price_trend === 'asymmetric').length;
+        this.bestFlightPrice = this.flights.length > 0 ? Math.min(...this.flights.map(f => f.price)) : 0;
+
+        const parts = [];
+        if (this.flights.length) parts.push(`${this.flights.length} voo(s)`);
+        if (this.milesOffers.length) parts.push(`${this.milesOffers.length} milhas`);
+        if (this.hotels.length) parts.push(`${this.hotels.length} hotel(is)`);
+        this.summaryText = parts.join(' · ');
+
+        // Auto-select miles tab if we have miles but no flights
+        if (this.milesOffers.length > 0 && this.flights.length === 0) {
+          this.activeTab = 'miles';
+        } else {
+          this.activeTab = 'flights';
+        }
+
+        this.searched = true;
+        this.loading = false;
+
+        // Render chart
+        this.$nextTick(() => this.renderChart());
+
+        // Start AI streaming
+        if (this.searchId) {
+          await this.streamAnalysis(this.searchId);
+        }
+
+        await this.loadRecentSearches();
+
+      } catch (e) {
+        this.loading = false;
+        this.toast('Erro: ' + e.message, 'error');
+      }
+    },
+
+    async streamAnalysis(searchId) {
+      this.analysisText = '';
+      this.analysisStreaming = true;
+      const evtSource = new EventSource(`/api/analyze?search_id=${encodeURIComponent(searchId)}`);
+
+      evtSource.onmessage = (e) => {
+        if (e.data === '[DONE]') {
+          evtSource.close();
+          this.analysisStreaming = false;
+          return;
+        }
+        this.analysisText += e.data;
+      };
+
+      evtSource.onerror = () => {
+        evtSource.close();
+        this.analysisStreaming = false;
+      };
+    },
+
+    renderAnalysis(text) {
+      if (!text) return '';
+      try {
+        return DOMPurify.sanitize(marked.parse(text));
+      } catch {
+        return text;
+      }
+    },
+
+    renderChart() {
+      if (!this.priceHistory || !this.priceHistory.points || this.priceHistory.points.length === 0) return;
+      const canvas = document.getElementById('priceChart');
+      if (!canvas) return;
+
+      const pts = this.priceHistory.points;
+      const labels = pts.map(p => p.date);
+      const prices = pts.map(p => p.price);
+      const min = Math.min(...prices);
+      const max = Math.max(...prices);
+      const avg = prices.reduce((s, v) => s + v, 0) / prices.length;
+      const current = prices[prices.length - 1];
+
+      this.chartMin = min;
+      this.chartAvg = avg;
+      this.chartCurrent = current;
+
+      if (this._chart) {
+        this._chart.destroy();
+        this._chart = null;
+      }
+
+      this._chart = new Chart(canvas, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            {
+              label: 'Preço',
+              data: prices,
+              borderColor: '#00d4ff',
+              backgroundColor: 'rgba(0,212,255,0.08)',
+              fill: true,
+              tension: 0.4,
+              pointRadius: 3,
+              pointBackgroundColor: '#00d4ff',
+            },
+            {
+              label: 'Média',
+              data: Array(prices.length).fill(avg),
+              borderColor: '#ffd700',
+              borderDash: [5, 5],
+              pointRadius: 0,
+              fill: false,
+            },
+            {
+              label: 'Mínimo',
+              data: Array(prices.length).fill(min),
+              borderColor: '#22c55e',
+              borderDash: [3, 3],
+              pointRadius: 0,
+              fill: false,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { labels: { color: '#94a3b8', font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: ctx => `R$ ${Number(ctx.raw).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
+              },
+            },
+          },
+          scales: {
+            x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: 'rgba(0,212,255,0.05)' } },
+            y: {
+              ticks: {
+                color: '#64748b',
+                callback: v => 'R$' + Number(v).toLocaleString('pt-BR', { maximumFractionDigits: 0 }),
+              },
+              grid: { color: 'rgba(0,212,255,0.05)' },
+            },
+          },
+        },
+      });
+    },
+
+    // Helpers
+    fmtDuration(minutes) {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return `${h}h${String(m).padStart(2, '0')}m`;
+    },
+
+    fmtMilesDuration(minutes) {
+      if (!minutes) return '';
+      return this.fmtDuration(minutes);
+    },
+
+    fmtMiles(v) {
+      if (!v) return '0 pts';
+      return Number(v).toLocaleString('pt-BR') + ' pts';
+    },
+
+    cpm(price, miles) {
+      if (!price || !miles) return '—';
+      return (price / miles).toFixed(4);
+    },
+
+    cpmClass(price, miles) {
+      if (!price || !miles) return 'bg-slate-800 text-slate-400';
+      const c = price / miles;
+      if (c < 0.03) return 'bg-green-900/50 text-green-400 border border-green-800';
+      if (c < 0.05) return 'bg-yellow-900/50 text-yellow-400 border border-yellow-800';
+      return 'bg-red-900/50 text-red-400 border border-red-800';
+    },
+
+    companyColor(company) {
+      const colors = {
+        GOL: 'background:#f97316',
+        AZUL: 'background:#3b82f6',
+        LATAM: 'background:#dc2626',
+        TAP: 'background:#16a34a',
+        IBERIA: 'background:#7c3aed',
+        AMERICAN: 'background:#0ea5e9',
+      };
+      return colors[company] || 'background:#475569';
+    },
+
+    toast(message, type = 'info') {
+      const id = Date.now();
+      this.toasts.push({ id, message, type });
+      setTimeout(() => {
+        this.toasts = this.toasts.filter(t => t.id !== id);
+      }, 4000);
+    },
+  };
+}
+</script>
+</body>
+</html>

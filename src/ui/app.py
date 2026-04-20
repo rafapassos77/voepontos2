@@ -31,6 +31,7 @@ from src.models import (
 )
 from src.agents.travel_agent import TravelAgent
 from src.database.cache import PriceCache
+from src.services.search_service import SearchService
 
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
@@ -409,6 +410,7 @@ class VoePontosApp(App):
         super().__init__()
         self._agent = TravelAgent()
         self._cache = PriceCache()
+        self._service = SearchService(cache=self._cache)
         self._chart_widget = PriceChartWidget()
         self._recent_searches: list[dict] = []
 
@@ -728,76 +730,12 @@ class VoePontosApp(App):
             btn.disabled = False
 
     async def _fetch_results(self, params: SearchParams) -> SearchResult:
-        from src.api.mock_data import (
-            generate_flights, generate_hotels, generate_price_history
-        )
+        log = self.query_one("#analysis-log", RichLog)
 
-        is_demo = Config.is_demo_mode()
+        def on_progress(msg: str) -> None:
+            log.write(f"[cyan]{msg}[/cyan]")
 
-        # ── 1. Flights + Hotels (Amadeus or mock) ────────────────────────────
-        if is_demo:
-            flights = generate_flights(params)
-            hotels = generate_hotels(params)
-            history = generate_price_history(
-                params.origin, params.destination, params.cabin_class
-            )
-        else:
-            try:
-                from src.api.amadeus_client import AmadeusClient
-                client = AmadeusClient()
-                flights = await client.search_flights(params)
-                hotels = await client.search_hotels(params)
-                await client.close()
-            except Exception:
-                is_demo = True
-                flights = generate_flights(params)
-                hotels = generate_hotels(params)
-
-            history = await self._cache.get_price_history(
-                f"{params.origin}-{params.destination}",
-                params.cabin_class,
-            )
-            if not history:
-                history = generate_price_history(
-                    params.origin, params.destination, params.cabin_class
-                )
-
-        # ── 2. Miles search (BuscaMilhas — sempre ativa) ─────────────────────
-        miles_offers: list = []
-        try:
-            from src.api.buscamilhas_client import BuscaMilhasClient
-            bm = BuscaMilhasClient()
-            log = self.query_one("#analysis-log", RichLog)
-            log.write("[cyan]🎯 Buscando milhas em GOL, AZUL, LATAM, TAP, IBERIA, AMERICAN...[/cyan]")
-            miles_offers = await bm.search(params, only_miles=True)
-            await bm.close()
-            if miles_offers:
-                log.write(f"[green]✓ {len(miles_offers)} opção(ões) em milhas encontrada(s)[/green]")
-            else:
-                log.write("[yellow]ℹ Nenhuma oferta em milhas disponível para esta rota/data[/yellow]")
-        except Exception as exc:
-            try:
-                self.query_one("#analysis-log", RichLog).write(
-                    f"[dim]ℹ Milhas: {escape(str(exc)[:80])}[/dim]"
-                )
-            except Exception:
-                pass
-
-        # ── 3. Market analysis on cash flights ───────────────────────────────
-        if flights:
-            avg = sum(f.price for f in flights) / len(flights)
-            for f in flights:
-                f.avg_market_price = avg
-                f.price_vs_avg_pct = (f.price - avg) / avg * 100
-
-        return SearchResult(
-            params=params,
-            flights=flights,
-            hotels=hotels,
-            miles_offers=miles_offers,
-            price_history=history,
-            is_demo=is_demo,
-        )
+        return await self._service.run_search(params, progress_callback=on_progress)
 
     # ─── Table Population ─────────────────────────────────────────────────────
 
