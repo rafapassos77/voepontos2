@@ -1,0 +1,73 @@
+{
+  "_meta": {
+    "description": "Tabela de coeficientes de valor do milheiro (R$ por 1.000 milhas). Editável em tempo real — endpoint POST /api/coefficients/reload recarrega do disco.",
+    "updated_at": "2026-04-22",
+    "version": 1
+  },
+  "companies": {
+    "GOL": {
+      "default": 24.50,
+      "by_miles_type": {
+        "SMILES": 24.50,
+        "SMILES CLUB": 22.00,
+        "DIAMANTE": 20.00
+      },
+      "by_value_type": {
+        "PO": 22.00,
+        "PROMO": 23.00
+      }
+    },
+    "LATAM": {
+      "default": 26.80,
+      "by_miles_type": {
+        "LIGHT ECONOMY": 26.20,
+        "PLUS ECONOMY": 27.50,
+        "TOP ECONOMY": 28.50,
+        "LIGHT BUSINESS": 30.00,
+        "PLUS BUSINESS": 30.50,
+        "TOP BUSINESS": 31.00
+      },
+      "by_value_type": {
+        "LT": 26.20
+      }
+    },
+    "AZUL": {
+      "default": 15.90,
+      "by_miles_type": {
+        "TUDO AZUL": 15.90,
+        "CLUBE TUDO AZUL": 14.50
+      },
+      "by_value_type": {
+        "AZUL": 15.90,
+        "MAIS AZUL": 17.50,
+        "ECONOMICA": 15.90,
+        "EXECUTIVA": 18.00
+      }
+    },
+    "TAP": {
+      "default": 18.50,
+      "by_miles_type": {
+        "MILES&GO": 18.50,
+        "EXECUTIVA": 21.00
+      }
+    },
+    "IBERIA": {
+      "default": 19.20,
+      "by_miles_type": {
+        "IBERIA PLUS": 19.20,
+        "AVIOS": 19.20,
+        "BUSINESS": 22.00
+      }
+    },
+    "AMERICAN": {
+      "default": 22.00,
+      "by_miles_type": {
+        "AADVANTAGE": 22.00,
+        "BUSINESS": 25.00
+      }
+    },
+    "AMERICAN AIRLINES": {
+      "default": 22.00
+    }
+  }
+}

@@ -29,6 +29,7 @@ Suas capacidades:
 - Comparar emissão em milhas vs. passagem paga e calcular custo por milha (CPM)
 - Conhecer os programas: Smiles (GOL), TudoAzul (AZUL), LATAM Pass, Miles&Go (TAP), Avios (Iberia), AAdvantage (American)
 - Identificar quando usar milhas é mais vantajoso que pagar em dinheiro
+- Usar o VALOR ESTIMADO em R$ de cada oferta em milhas (já convertido pelo sistema via coeficiente por companhia/tipo tarifário + taxas) para comparar DIRETAMENTE com voos pagos. A fórmula do sistema é: (milhas ÷ 1000) × coef + taxa embarque + taxa resgate. Sempre que possível, indique a diferença entre "valor estimado milhas" e "voo pago mais barato" em percentual e BRL absoluto.
 
 Formato de resposta:
 - Seja direto e objetivo (respostas de 200-400 palavras)
@@ -110,26 +111,45 @@ class TravelAgent:
                     fee = m.fee_adult
                     tipo = m.miles_type or m.value_type or "—"
                     conn_str = "DIRETO" if m.connections == 0 else f"{m.connections} escala(s)"
+                    if m.coefficient_configured and m.estimated_brl_adult > 0:
+                        brl_info = (
+                            f" | VALOR EST. R${m.estimated_brl_adult:,.2f} "
+                            f"(coef R${m.coefficient_applied:.2f}/mil [{m.coefficient_source}])"
+                        )
+                    else:
+                        brl_info = " | coef. NÃO configurado"
                     lines.append(
                         f"{i}. {m.company} {m.flight_number} | "
                         f"{miles:,.0f} pts | taxa R${fee:,.2f} | "
-                        f"{tipo} | {m.duration_fmt} | {conn_str}"
+                        f"{tipo} | {m.duration_fmt} | {conn_str}{brl_info}"
                     )
             if inbound_miles:
                 lines.append(f"--- VOLTA ({len(inbound_miles)} opções) ---")
                 for i, m in enumerate(inbound_miles[:4], 1):
                     miles = m.total_miles_adult or m.miles_adult
                     fee = m.fee_adult
+                    brl_info = (
+                        f" | R${m.estimated_brl_adult:,.2f}"
+                        if m.coefficient_configured and m.estimated_brl_adult > 0 else ""
+                    )
                     lines.append(
                         f"{i}. {m.company} {m.flight_number} | "
-                        f"{miles:,.0f} pts | taxa R${fee:,.2f} | {m.duration_fmt}"
+                        f"{miles:,.0f} pts | taxa R${fee:,.2f} | {m.duration_fmt}{brl_info}"
                     )
             best_m = result.best_miles_offer
             if best_m:
                 best_miles = best_m.total_miles_adult or best_m.miles_adult
                 lines.append(
-                    f"\nMelhor milhas (ida): {best_miles:,.0f} pts — "
+                    f"\nMelhor milhas (ida, por pts): {best_miles:,.0f} pts — "
                     f"{best_m.company} {best_m.flight_number}"
+                )
+            best_m_brl = result.best_miles_offer_by_brl
+            if best_m_brl:
+                lines.append(
+                    f"Melhor milhas (ida, por valor R$): R$ {best_m_brl.estimated_brl_adult:,.2f} — "
+                    f"{best_m_brl.company} {best_m_brl.flight_number} "
+                    f"({best_m_brl.total_miles_adult or best_m_brl.miles_adult:,.0f} pts × "
+                    f"R${best_m_brl.coefficient_applied:.2f} + taxas)"
                 )
         lines.append("")
 

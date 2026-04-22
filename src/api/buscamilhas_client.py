@@ -11,6 +11,7 @@ import httpx
 
 from src.config import Config
 from src.models import MilesOffer, MilesConnection, CabinClass, TripType, SearchParams
+from src.services.miles_pricing import get_engine
 
 
 # ─── Credenciais ──────────────────────────────────────────────────────────────
@@ -208,8 +209,40 @@ class BuscaMilhasClient:
             # Baggage
             baggage = str(voo.get("LimiteBagagem", "")) if voo.get("LimiteBagagem") is not None else ""
 
+            company = voo.get("Companhia", airline) or airline
+            miles_type = str(voo.get("TipoMilhas", "") or "")
+            value_type = str(voo.get("TipoValor", "") or "")
+
+            # ── Precificação interna: milhas → R$ ────────────────────────────
+            engine = get_engine()
+            pr_adult = engine.price_miles(
+                company=company,
+                miles_total=total_adult,
+                fee_embarque=fee_adult,
+                fee_resgate=rescue_fee,
+                miles_type=miles_type,
+                value_type=value_type,
+            )
+            # Criança e bebê: mesmo coeficiente/taxas, só variam as milhas e taxa
+            pr_child = engine.price_miles(
+                company=company,
+                miles_total=total_child,
+                fee_embarque=fee_child,
+                fee_resgate=0.0,  # taxa resgate geralmente não se replica por passageiro
+                miles_type=miles_type,
+                value_type=value_type,
+            )
+            pr_infant = engine.price_miles(
+                company=company,
+                miles_total=total_infant,
+                fee_embarque=fee_infant,
+                fee_resgate=0.0,
+                miles_type=miles_type,
+                value_type=value_type,
+            )
+
             return MilesOffer(
-                company=voo.get("Companhia", airline),
+                company=company,
                 flight_number=str(voo.get("NumeroVoo", "")),
                 direction=int(voo.get("Sentido", 1)),
                 origin=voo.get("Origem", ""),
@@ -229,10 +262,20 @@ class BuscaMilhasClient:
                 fee_child=fee_child,
                 fee_infant=fee_infant,
                 rescue_fee=rescue_fee,
-                miles_type=str(voo.get("TipoMilhas", "")),
-                value_type=str(voo.get("TipoValor", "")),
+                miles_type=miles_type,
+                value_type=value_type,
                 baggage_limit=baggage,
                 is_miles=only_miles,
+                # Precificação interna
+                coefficient_applied=pr_adult.coefficient,
+                coefficient_source=pr_adult.coefficient_source,
+                coefficient_configured=pr_adult.coefficient_configured,
+                estimated_brl_adult=pr_adult.estimated_brl,
+                estimated_brl_child=pr_child.estimated_brl,
+                estimated_brl_infant=pr_infant.estimated_brl,
+                miles_converted_brl_adult=pr_adult.miles_converted_brl,
+                fees_brl_adult=pr_adult.fees_brl,
+                calc_memory=pr_adult.calc_memory,
             )
         except Exception:
             return None

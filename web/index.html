@@ -293,7 +293,8 @@
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
             <template x-for="(m, idx) in milesOffers" :key="idx">
-              <div class="bg-navy-800 rounded-lg p-4 hover:bg-navy-700 transition card-border-cyan">
+              <div class="bg-navy-800 rounded-lg p-4 hover:bg-navy-700 transition"
+                   :class="!m.coefficient_configured ? 'card-border-red' : (isBestByBrl(m) ? 'card-border-green' : 'card-border-cyan')">
                 <!-- Header -->
                 <div class="flex justify-between items-start mb-2">
                   <div class="flex items-center gap-2">
@@ -302,37 +303,77 @@
                          x-text="m.company.substring(0,2)"></div>
                     <div>
                       <div class="text-sm font-semibold text-cyan-400" x-text="m.company"></div>
-                      <div class="text-xs text-slate-600" x-text="m.flight_number"></div>
+                      <div class="text-xs text-slate-600" x-text="m.flight_number + ' · ' + (m.origin + '→' + m.destination)"></div>
                     </div>
                   </div>
                   <span class="text-xs px-2 py-0.5 rounded"
                         :class="m.direction===1 ? 'bg-blue-900/50 text-blue-400 border border-blue-800' : 'bg-purple-900/50 text-purple-400 border border-purple-800'"
                         x-text="m.direction===1 ? 'IDA' : 'VOLTA'"></span>
                 </div>
-                <!-- Miles -->
-                <div class="mb-2">
-                  <div class="text-xl font-bold text-slate-100"
-                       x-text="fmtMiles(m.total_miles_adult || m.miles_adult)"></div>
-                  <div class="text-xs text-slate-500">+ <span x-text="'R$ '+Number(m.fee_adult).toFixed(2)"></span> taxa</div>
+
+                <!-- Valor final estimado em R$ (destaque) -->
+                <div class="bg-navy-700/60 rounded p-2 mb-2 border border-navy-500">
+                  <div class="text-[10px] uppercase tracking-widest text-slate-500 mb-0.5">Valor final estimado</div>
+                  <div class="flex items-baseline justify-between">
+                    <div class="text-2xl font-black"
+                         :class="!m.coefficient_configured ? 'text-red-400' : 'text-green-400'"
+                         x-text="m.coefficient_configured ? 'R$ '+Number(m.estimated_brl_adult).toLocaleString('pt-BR',{minimumFractionDigits:2}) : '—'"></div>
+                    <div class="text-xs text-slate-500" x-text="'/adulto'"></div>
+                  </div>
+                  <div x-show="!m.coefficient_configured" class="text-xs text-red-400 mt-1">
+                    ⚠ Coeficiente não configurado
+                  </div>
                 </div>
-                <!-- CPM Badge -->
-                <div x-show="bestFlightPrice > 0 && (m.total_miles_adult || m.miles_adult) > 0" class="mb-2">
+
+                <!-- Milhas + Coeficiente -->
+                <div class="grid grid-cols-2 gap-2 text-xs mb-2">
+                  <div>
+                    <div class="text-slate-500">Milhas</div>
+                    <div class="text-slate-200 font-mono" x-text="fmtMiles(m.total_miles_adult || m.miles_adult)"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500">Coef. aplicado</div>
+                    <div class="text-slate-200 font-mono"
+                         x-text="m.coefficient_configured ? 'R$ '+Number(m.coefficient_applied).toFixed(2)+'/mil' : 'n/c'"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500">Milhas → R$</div>
+                    <div class="text-slate-200 font-mono" x-text="'R$ '+Number(m.miles_converted_brl_adult).toFixed(2)"></div>
+                  </div>
+                  <div>
+                    <div class="text-slate-500">Taxas (emb.+res.)</div>
+                    <div class="text-slate-200 font-mono" x-text="'R$ '+Number(m.fees_brl_adult).toFixed(2)"></div>
+                  </div>
+                </div>
+
+                <!-- Fonte do coeficiente + Memória (toggle) -->
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-[10px] text-slate-500 font-mono truncate" x-text="'fonte: '+(m.coefficient_source || 'n/a')"></span>
+                  <button @click="toggleMemory(idx)" class="text-[10px] text-cyan-400 hover:text-cyan-300">
+                    <span x-show="openMemory !== idx">ver cálculo ↓</span>
+                    <span x-show="openMemory === idx">esconder ↑</span>
+                  </button>
+                </div>
+                <div x-show="openMemory === idx" x-transition
+                     class="bg-navy-900 border border-navy-500 rounded p-2 mb-2 text-[11px] font-mono text-slate-400 leading-relaxed"
+                     x-text="m.calc_memory"></div>
+
+                <!-- Vs voo mais barato em dinheiro -->
+                <div x-show="bestFlightPrice > 0 && m.coefficient_configured && m.estimated_brl_adult > 0" class="mb-2">
                   <span class="text-xs px-2 py-0.5 rounded font-mono"
-                        :class="cpmClass(bestFlightPrice, m.total_miles_adult || m.miles_adult)"
-                        x-text="'CPM R$ '+cpm(bestFlightPrice, m.total_miles_adult || m.miles_adult)"></span>
+                        :class="brlVsCashClass(m.estimated_brl_adult, bestFlightPrice)"
+                        x-text="brlVsCashLabel(m.estimated_brl_adult, bestFlightPrice)"></span>
                 </div>
-                <!-- Details -->
-                <div class="flex items-center gap-2 flex-wrap text-xs">
-                  <span class="text-slate-400" x-text="m.origin + ' → ' + m.destination"></span>
-                  <span class="text-slate-600">·</span>
+
+                <!-- Detalhes técnicos -->
+                <div class="flex items-center gap-2 flex-wrap text-xs border-t border-navy-600 pt-2">
                   <span class="text-slate-400" x-text="fmtMilesDuration(m.duration_minutes)"></span>
+                  <span class="text-slate-600">·</span>
                   <span x-show="m.connections===0" class="text-green-400">Direto</span>
-                  <span x-show="m.connections>0" class="text-yellow-400" x-text="m.connections+' con.'"></span>
-                </div>
-                <!-- Type badges -->
-                <div class="flex gap-1 mt-2 flex-wrap">
-                  <span x-show="m.miles_type" class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.miles_type"></span>
-                  <span x-show="m.baggage_limit" class="text-xs bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.baggage_limit"></span>
+                  <span x-show="m.connections>0" class="text-yellow-400" x-text="m.connections+' conex.'"></span>
+                  <span x-show="m.miles_type" class="bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.miles_type"></span>
+                  <span x-show="m.value_type && m.value_type !== m.miles_type" class="bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.value_type"></span>
+                  <span x-show="m.baggage_limit" class="bg-navy-700 text-slate-400 px-1.5 py-0.5 rounded" x-text="m.baggage_limit"></span>
                 </div>
               </div>
             </template>
@@ -441,10 +482,12 @@ function travelApp() {
     asymCount: 0,
     searchTimeMs: 0,
     bestFlightPrice: 0,
+    bestMilesBrl: 0,
     chartMin: 0,
     chartAvg: 0,
     chartCurrent: 0,
     airportsList: {},
+    openMemory: -1,
     _chart: null,
 
     // Form
@@ -542,6 +585,9 @@ function travelApp() {
         this.searchTimeMs = data.search_time_ms || 0;
         this.asymCount = this.flights.filter(f => f.price_trend === 'asymmetric').length;
         this.bestFlightPrice = this.flights.length > 0 ? Math.min(...this.flights.map(f => f.price)) : 0;
+
+        const pricedMiles = this.milesOffers.filter(m => m.direction === 1 && m.coefficient_configured && m.estimated_brl_adult > 0);
+        this.bestMilesBrl = pricedMiles.length > 0 ? Math.min(...pricedMiles.map(m => m.estimated_brl_adult)) : 0;
 
         const parts = [];
         if (this.flights.length) parts.push(`${this.flights.length} voo(s)`);
@@ -724,6 +770,30 @@ function travelApp() {
         AMERICAN: 'background:#0ea5e9',
       };
       return colors[company] || 'background:#475569';
+    },
+
+    toggleMemory(idx) {
+      this.openMemory = this.openMemory === idx ? -1 : idx;
+    },
+
+    isBestByBrl(m) {
+      return m && m.direction === 1 && m.coefficient_configured
+        && this.bestMilesBrl > 0 && Math.abs(m.estimated_brl_adult - this.bestMilesBrl) < 0.01;
+    },
+
+    brlVsCashClass(milesBrl, cashBrl) {
+      if (!milesBrl || !cashBrl) return 'bg-slate-800 text-slate-400';
+      const diff = (milesBrl - cashBrl) / cashBrl;
+      if (diff <= -0.10) return 'bg-green-900/50 text-green-400 border border-green-800';
+      if (diff <= 0.05) return 'bg-yellow-900/50 text-yellow-400 border border-yellow-800';
+      return 'bg-red-900/50 text-red-400 border border-red-800';
+    },
+
+    brlVsCashLabel(milesBrl, cashBrl) {
+      if (!milesBrl || !cashBrl) return '';
+      const diff = (milesBrl - cashBrl) / cashBrl * 100;
+      const sign = diff >= 0 ? '+' : '';
+      return `${sign}${diff.toFixed(1)}% vs voo cash (R$ ${Number(cashBrl).toLocaleString('pt-BR', {maximumFractionDigits:0})})`;
     },
 
     toast(message, type = 'info') {

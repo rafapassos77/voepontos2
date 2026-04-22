@@ -27,6 +27,7 @@ from src.models import (
     TripType,
 )
 from src.services.search_service import SearchService, parse_date
+from src.services.miles_pricing import get_engine as get_pricing_engine, reload_engine
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
@@ -160,6 +161,45 @@ async def airports():
     return {
         iata: {"name": a.name, "city": a.city, "country": a.country}
         for iata, a in AIRPORTS.items()
+    }
+
+
+# ── Coeficientes de precificação (admin) ──────────────────────────────────────
+
+@app.get("/api/coefficients")
+async def coefficients():
+    """Retorna a tabela atual de coeficientes (milhas → R$)."""
+    return get_pricing_engine().config
+
+
+@app.post("/api/coefficients/reload")
+async def coefficients_reload():
+    """Recarrega coeficientes do disco sem reiniciar o servidor."""
+    summary = reload_engine()
+    return {"status": "ok", "summary": summary}
+
+
+@app.post("/api/coefficients/simulate")
+async def coefficients_simulate(payload: dict):
+    """Simula precificação de uma oferta em milhas sem passar pela BuscaMilhas."""
+    engine = get_pricing_engine()
+    result = engine.price_miles(
+        company=payload.get("company", ""),
+        miles_total=float(payload.get("miles_total", 0)),
+        fee_embarque=float(payload.get("fee_embarque", 0)),
+        fee_resgate=float(payload.get("fee_resgate", 0)),
+        miles_type=payload.get("miles_type", ""),
+        value_type=payload.get("value_type", ""),
+    )
+    return {
+        "estimated_brl": result.estimated_brl,
+        "miles_converted_brl": result.miles_converted_brl,
+        "fees_brl": result.fees_brl,
+        "coefficient": result.coefficient,
+        "coefficient_source": result.coefficient_source,
+        "coefficient_configured": result.coefficient_configured,
+        "calc_memory": result.calc_memory,
+        "miles_total": result.miles_total,
     }
 
 

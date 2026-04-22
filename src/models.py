@@ -257,6 +257,17 @@ class MilesOffer:
     # Metadados
     is_miles: bool = True       # True = resultado em milhas, False = pagante
 
+    # ─── Precificação interna (milhas → R$) ─────────────────────────────────
+    coefficient_applied: float = 0.0       # R$ por milheiro
+    coefficient_source: str = ""           # "default" | "by_value_type:..." | "by_miles_type:..." | "NOT_CONFIGURED"
+    coefficient_configured: bool = True    # False sinaliza coeficiente faltando
+    estimated_brl_adult: float = 0.0       # valor final estimado (milhas + taxas) adulto
+    estimated_brl_child: float = 0.0
+    estimated_brl_infant: float = 0.0
+    miles_converted_brl_adult: float = 0.0 # só a parte das milhas convertidas
+    fees_brl_adult: float = 0.0            # taxa embarque + taxa resgate
+    calc_memory: str = ""                  # fórmula textual para auditoria
+
     @property
     def duration_fmt(self) -> str:
         h, m = divmod(self.duration_minutes, 60)
@@ -276,6 +287,11 @@ class MilesOffer:
 
     def label_direction(self) -> str:
         return "IDA" if self.direction == 1 else "VOLTA"
+
+    def estimated_brl_fmt(self) -> str:
+        if not self.coefficient_configured:
+            return "— coeficiente n/c"
+        return f"R$ {self.estimated_brl_adult:,.2f}"
 
 
 @dataclass
@@ -305,6 +321,18 @@ class SearchResult:
         if not outbound:
             return None
         return min(outbound, key=lambda o: o.total_miles_adult or o.miles_adult)
+
+    @property
+    def best_miles_offer_by_brl(self) -> Optional[MilesOffer]:
+        """Melhor oferta de ida pelo valor estimado em R$ (milhas convertidas + taxas)."""
+        priced = [
+            o for o in self.miles_offers
+            if o.direction == 1 and o.is_miles
+            and o.coefficient_configured and o.estimated_brl_adult > 0
+        ]
+        if not priced:
+            return None
+        return min(priced, key=lambda o: o.estimated_brl_adult)
 
 
 # Known airports for autocomplete
